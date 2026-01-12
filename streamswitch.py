@@ -1,5 +1,8 @@
 import os
+import math
 import cv2
+import librosa
+from spafe.features.gfcc import gfcc
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 import numpy as np
@@ -55,67 +58,90 @@ base_path = Path(os.getcwd())
 
 class FrameGenerator:
 
-    def __init__(self, video_paths, group_size, target_shape=(224, 224)):
+    def __init__(self, video_paths, video_group_size, target_shape=(224, 224)):
 
-        self.video_paths = video_paths
-        self.group_size = group_size
-        self.target_shape = target_shape
+        self._video_paths = video_paths
+        self._video_group_size = video_group_size
+        self._target_shape = target_shape
+        self._num_cepstral_coeffs = 13
+        # nrows = ((a.size - stride_length) // stride_step) + 1
 
-    # def get_files_and_labels(self):
-    #     video_files = []
-    #     for class_index, class_name in enumerate(self.class_names):
-    #         class_path = os.path.join(self.data_path, class_name)
-    #         for video_name in os.listdir(class_path):
-    #             video_files.append((os.path.join(class_path, video_name), class_index))
-    #     if self.training:
-    #         np.random.shuffle(video_files)
-    #     return video_files
+    def _get_frames(self, video_path):
 
-    def frames_from_video_file(self, video_path):
+        video = cv2.VideoCapture(video_path)
+        audio = AudioSegment.from_file(video_path, format="mp4")
 
-        cap = cv2.VideoCapture(video_path)
-
-        if not cap.isOpened():
+        if not video.isOpened():
             print(f"Could not open {video_path}")
             return
             # sys.exit(1)
 
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_video_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        video_fps = video.get(cv2.CAP_PROP_FPS)
  
-        num_groups, unused_frames = divmod(total_frames, FRAME_GROUP)
- 
+        num_groups, unused_video_frames = divmod(total_video_frames, self._video_group_size)
+        audio_per_video, unused_audio_frames = divmod(int(audio.frame_count() / audio.channels), total_video_frames)
+        audio_group_size = audio_per_video * self._video_group_size
+
+        print(f"{video_path}: UNUSED VIDEO FRAMES {unused_video_frames}, UNUSED AUDIO FRAMES {unused_audio_frames}.")
+
+        audio_idx = 0
         for _ in range(num_groups):
-            frame_grp = []
-            for _ in range(self.group_size):
-                ret, frame = cap.read()
-                frame = tf.image.convert_image_dtype(frame, tf.float32)
-                frame = tf.image.resize(frame, self.target_shape)
-                frame_grp.append(frame)
-            yield tf.stack(frame_grp, axis=0)
+            video_frame_group = self._get_video_group(video)
+            mfcc_coeffs, gfcc_coeffs = self._get_audio_group(audio, audio_idx, audio_idx + audio_group_size)
+            audio_idx += audio_group_size
+
+            pdb.set_trace()
+
+            yield video_frame_group
      
-        cap.release()
+        video.release()
+    
+    def _get_video_group(self, video):
+
+        frame_grp = []
+        for _ in range(self._video_group_size):
+            ret, frame = video.read()
+            frame = tf.image.convert_image_dtype(frame, tf.float32)
+            frame = tf.image.resize(frame, self._target_shape)
+            frame_grp.append(frame)
+        return tf.stack(frame_grp, axis=0)
+    
+    def _get_audio_group(self, audio, start_idx, end_idx):
+
+        result = audio.get_sample_slice(start_idx, end_idx).get_array_of_samples()
+        result_array = np.array(result).reshape(-1, audio.channels).transpose().astype(np.float32)
+        normalized_array = librosa.util.normalize(librosa.to_mono(result_array))
+
+        mfcc_coefficients = librosa.feature.mfcc(
+            y=normalized_array, 
+            sr=audio.frame_rate, 
+            n_mfcc=self._num_cepstral_coeffs)
+
+        gfcc_coefficients = gfcc(
+            sig=normalized_array, 
+            fs=audio.frame_rate, 
+            num_ceps=self._num_cepstral_coeffs)
+        
+        return (mfcc_coefficients, gfcc_coefficients.transpose())
            
     def __call__(self):
-        for video_path in self.video_paths:
-            for frame_grp in self.frames_from_video_file(video_path):
-                yield frame_grp # tf.keras.utils.to_categorical(label, num_classes=len(self.class_names))
+        for video_path in self._video_paths:
+            for frame_grp in self._get_frames(video_path):
+                yield frame_grp
  
 # Configuration
 FRAME_GROUP = 4 
 IMG_SIZE = (112, 112) # Height, Width
 VIDEO_PATHS = [base_path.joinpath("Family_Guy.mp4"), base_path.joinpath("Football_Clip.mp4")]
 
-audio = AudioSegment.from_file(VIDEO_PATHS[0], format="mp4")
-num_channels = audio.channels
-result = audio.get_sample_slice(0, 20).get_array_of_samples()
-result_array = np.array(result).reshape(-1, num_channels)
-pdb.set_trace()
+# audio.export(VIDEO_PATHS[0].cwd().joinpath("audio.wav"))
+# y, sr = librosa.load(VIDEO_PATHS[0].cwd().joinpath("audio.wav"), sr=None)
 
 # Instantiate the generator
 frame_generator = FrameGenerator(
     video_paths=VIDEO_PATHS, 
-    group_size=FRAME_GROUP, 
+    video_group_size=FRAME_GROUP, 
     target_shape=IMG_SIZE)
 
 # Create the dataset
@@ -129,84 +155,9 @@ dataset = tf.data.Dataset.from_generator(
 dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
 for video_grp in dataset:
-    pdb.set_trace()
+    print("GENERATING DATA!")
 
-################################################################################
-
-# tf.config.run_functions_eagerly(True)
-# tf.data.experimental.enable_debug_mode()
-
-# def process_with_cv2(path):
-# 
-#     cap = cv2.VideoCapture(path)
-#     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-#     fps = cap.get(cv2.CAP_PROP_FPS)
-# 
-#     num_groups, unused_frames = divmod(total_frames, FRAME_GROUP)
-# 
-#     if not cap.isOpened():
-#         print(f"Could not open {video_path}")
-#         sys.exit(1)
-# 
-#     frames = []
-#     for _ in range(total_frames - unused_frames):
-#         ret, frame = cap.read()
-#         frame = tf.image.convert_image_dtype(frame, tf.float32)
-#         frame = tf.image.resize(frame, (64, 64))
-#         frames.append(frame)
-#     
-#     cap.release()
-# 
-#     return tf.stack(frames, axis=0)
-# 
-# def process_path(path):
-# 
-#     video_frames = tf.numpy_function(
-#         func=process_with_cv2,
-#         inp=[path],
-#         Tout=[tf.float32]
-#     )
-# 
-#     # num_frame_grps = int(num_frames.numpy() / FRAME_GROUP)
-#     # frame_groups = tf.split(video_frames, num_frame_grps, axis=0)
-#     # labels = [f"label{i}" for i in range(num_frame_grps)]
-# 
-#     # return video_frames, "labels"
-#     return video_frames
-
-# def split_tensor(tensor, frame_grp):
-# 
-#     # shape = tf.shape(tensor)
-# 
-#     # frame_groups = []
-#     # for i in range(shape[0]):
-#     #     frame_group = []
-#     #     for j in range(n):
-#     #         frame_group.append(tensor[i*n+j,:,:,:])
-#     #     frame_groups.append(tf.stack(frame_group, axis=0))
-#     # num_groups = tf.math.divide(shape[0], tf.constant(n))
-# 
-#     # num_groups = int(shape[0] / n)
-#     # tf.print(f"NUM GROUPS: {num_groups}")
-#     frame_groups = tf.split(tensor, num_or_size_splits=frame_grp, axis=0)
-# 
-#     # new_shape = (n, shape[1], shape[2], shape[3])
-#     # reshaped_tensor = tf.reshape(tensor, new_shape)
-# 
-#     return tf.data.Dataset.from_tensor_slices(frame_groups)
-
-# train_ds = tf.data.Dataset.from_tensor_slices(paths)
-# train_ds = train_ds.map(process_path, num_parallel_calls=tf.data.AUTOTUNE)
-# train_ds = train_ds.batch(FRAME_GROUP, drop_remainder=True)
-# train_ds = train_ds.flat_map(lambda x: split_tensor(x, tf.shape(x)[0] * [FRAME_GROUP])) # tf.math.divide(tf.shape(x)[0], tf.constant(FRAME_GROUP))))
-
-# train_ds = train_ds.shuffle(bffer_size=len(train_ds)).batch(64, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
-
-# for video in train_ds:
-#     pdb.set_trace()
-#     print(f"Image shape: {image.numpy().shape}")
-#     print(f"Labels: {labels}")
-
+##########################################################################################
 
 input_tensor = layers.Input(shape=(FRAME_GROUP, 227, 227, 3)) # AlexNet typically uses 227x227x3 images
 
