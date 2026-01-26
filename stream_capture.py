@@ -2,6 +2,9 @@ import sys
 import time
 from datetime import datetime
 import pyaudio
+import librosa
+from spafe.features.gfcc import gfcc
+from spafe.utils.preprocessing import SlidingWindow
 import cv2
 import multiprocessing as mp
 from multiprocessing import shared_memory
@@ -103,7 +106,6 @@ class AudioCaptureProcess(mp.Process):
                     input_device_index=audio_device_index,
                     frames_per_buffer=self.chunk)
 
-
     def run(self):
         self.synchronizer.wait()
         process_name = mp.current_process().name
@@ -133,6 +135,8 @@ def main():
         VIDEO_FRAME_SHAPE = (480, 640)
         AUDIO_CHUNK_SIZE = 2048
         NUM_AUDIO_CHANNELS = 2
+        NUM_CEPSTRAL_FRAMES = 26 
+        NUM_CEPSTRAL_COEFFS = 13
 
         video_frame_template = np.ndarray(
             VIDEO_FRAME_SHAPE[0] * VIDEO_FRAME_SHAPE[1] * 3,
@@ -159,7 +163,7 @@ def main():
             dtype=np.int16, 
             buffer=audio_shared_memory.buf).reshape(NUM_AUDIO_CHANNELS, -1)
 
-        video_thread = VideoCaptureProcess(
+        video_process = VideoCaptureProcess(
             name="Video Capture Process",
             video_device_index=VIDEO_DEVICE_INDEX, 
             frame_width=VIDEO_FRAME_SHAPE[1], 
@@ -167,7 +171,7 @@ def main():
             synchronizer=stream_synchronizer,
             deposit_name=video_shared_memory.name)
 
-        audio_thread = AudioCaptureProcess(
+        audio_process = AudioCaptureProcess(
             name="Audio Capture Process",
             audio_device_index=AUDIO_DEVICE_INDEX, 
             chunk=AUDIO_CHUNK_SIZE,
@@ -175,12 +179,13 @@ def main():
             synchronizer=stream_synchronizer,
             deposit_name=audio_shared_memory.name)
 
-        video_thread.start()
-        audio_thread.start()
+        video_process.start()
+        audio_process.start()
 
         stream_synchronizer.set()
 
         frame_pair = []
+        window = SlidingWindow()
         while True:
             if len(frame_pair) == 2:
                 print(np.array_equal(frame_pair[0], frame_pair[1]))
@@ -189,6 +194,30 @@ def main():
             process_name = mp.current_process().name
             # frame_pair.append(video_frame_retrieval.copy())
             # time.sleep(0.01)
+            frame = tf.image.convert_image_dtype(video_frame_retrieval, tf.float32)
+            frame = tf.image.resize(frame, (224, 224))
+
+            print(f"FIDEO FRAME {frame.shape}")
+
+            normalized_array = librosa.util.normalize(
+                librosa.to_mono(audio_frame_retrieval.astype(np.float32)))
+
+            mfcc_coefficients = librosa.feature.mfcc(
+                y=normalized_array, 
+                sr=48000,
+                n_mfcc=NUM_CEPSTRAL_COEFFS,
+                hop_length=512)
+
+            # window.win_hop = gfcc_win_hop
+
+            gfcc_coefficients = gfcc(
+                sig=normalized_array, 
+                fs=48000, 
+                num_ceps=NUM_CEPSTRAL_COEFFS, 
+                window=window).transpose()
+
+            print(f"MFCC SHAPE: {mfcc_coefficients.shape}")
+            print(f"GFCC SHAPE: {gfcc_coefficients.shape}")
             # print(f"{process_name} {current_time}: VIDEO FRAME {video_frame_retrieval.shape}")
             # print(f"{process_name} {current_time}: AUDIO FRAME {audio_frame_retrieval.shape}")
 
