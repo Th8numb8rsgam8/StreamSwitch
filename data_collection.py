@@ -1,4 +1,5 @@
 import os
+import uuid
 import subprocess
 
 import pdb
@@ -11,9 +12,10 @@ VIDEO_ENCODING_SPEED = "medium"
 AUDIO_DEVICE = "default"
 CONSTANT_RATE_FACTOR = 23
 AUDIO_ENCODER = "aac"
-RECORD_TIME = 60
+RECORD_TIME = 300 
 
 NUM_FILES = 10
+S3_BUCKET_NAME = "streamswitch-streams"
 
 command_options = [
     ("-f", "v4l2"),
@@ -31,18 +33,42 @@ command_options = [
     ("-f", "mp4")
 ]
 
+aws_command = ["aws", "s3", "mv"]
+
 collection_command = ["ffmpeg"]
 for option, value in command_options:
     collection_command.append(option)
     collection_command.append(value)
 
 
-for i in range(NUM_FILES):
-    collection_command.append(f"output_{i}.mp4")
-    cmd = " ".join(collection_command)
-    result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL)
-    if result.returncode == 0:
-        print(f"FILE {i} video recording complete")
-    else:
-        print(f"FILE {i} video recording fail")
-    collection_command.pop()
+try:
+    while True:
+        doc_id = uuid.uuid4()
+        collection_command.append(f"{doc_id}.mp4")
+        cmd = " ".join(collection_command)
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL)
+        if result.returncode == 0:
+            print(f"\033[1;32mFILE {doc_id} video recording complete \033[0;0m")
+        else:
+            print(f"\033[1;31mFILE {doc_id} video recording fail \033[0;0m")
+            collection_command.pop()
+            aws_command.pop()
+            aws_command.pop()
+            continue
+
+        new_s3_object = f"s3://{S3_BUCKET_NAME}/{doc_id}.mp4"
+        aws_command.append(f"{doc_id}.mp4")
+        aws_command.append(new_s3_object)
+        cmd = " ".join(aws_command)
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL)
+        if result.returncode == 0:
+            print(f"\033[1;32mFILE {doc_id} video upload complete \033[0;0m")
+        else:
+            print(f"\033[1;31mFILE {doc_id} video upload fail \033[0;0m")
+
+        collection_command.pop()
+        aws_command.pop()
+        aws_command.pop()
+except KeyboardInterrupt as e:
+    print("PROGRAM ABORTED")
+    sys.exit(0)
