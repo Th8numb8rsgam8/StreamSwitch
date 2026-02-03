@@ -10,8 +10,6 @@ from tensorflow.keras import layers, Model
 import numpy as np
 from pydub import AudioSegment
 
-import pdb
-
 class AdFrameGenerator:
 
     NUM_CEPSTRAL_FRAMES = 26 
@@ -29,10 +27,10 @@ class AdFrameGenerator:
     def _get_frames(self, video_path):
 
         label_file = video_path.parent.joinpath(video_path.name.replace("mp4", "npy"))
-        label_array = np.load(label_file)
+        # label_array = np.load(label_file)
 
         video = cv2.VideoCapture(video_path)
-        audio = AudioSegment.from_file(video_path, format="mp4")
+        audio = AudioSegment.from_file(video_path, format="mp4", frame_rate=44100)
 
         if not video.isOpened():
             tf.print(f"Could not open {video_path}")
