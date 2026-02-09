@@ -1,8 +1,26 @@
 import os
 import uuid
+import argparse
 import subprocess
 
 import pdb
+
+cli_parser = argparse.ArgumentParser(prog="Raw Stream Collector")
+cli_parser.add_argument(
+    "--video",
+    dest="video_length",
+    required=True,
+    type=int,
+    help="Length of each video captured (s)",
+)
+cli_parser.add_argument(
+    "--num-files",
+    dest="num_video_files",
+    required=True,
+    type=int,
+    help="Total number of video streams to record"
+)
+cli_args = vars(cli_parser.parse_args())
 
 FRAMERATE = 30
 VIDEO_SHAPE = (640, 480)
@@ -12,9 +30,9 @@ VIDEO_ENCODING_SPEED = "medium"
 AUDIO_DEVICE = "default"
 CONSTANT_RATE_FACTOR = 23
 AUDIO_ENCODER = "aac"
-RECORD_TIME = 300 
+RECORD_TIME = cli_args["video_length"] 
 
-NUM_FILES = 10
+NUM_FILES = cli_args["num_video_files"]
 S3_BUCKET_NAME = "streamswitch-streams"
 
 command_options = [
@@ -42,7 +60,7 @@ for option, value in command_options:
 
 
 try:
-    while True:
+    for _ in range(NUM_FILES): 
         doc_id = uuid.uuid4()
         collection_command.append(f"{doc_id}.mp4")
         cmd = " ".join(collection_command)
