@@ -9,8 +9,11 @@ cli_parser = argparse.ArgumentParser(prog="Raw Stream Processor")
 cli_parser.add_argument(
     "video_file",
     metavar="/path/to/file",
-    type=str
-)
+    type=str)
+cli_parser.add_argument(
+    "--no-clip",
+    dest="clip_video",
+    action="store_false")
 
 cli_args = vars(cli_parser.parse_args())
 video_file = Path(cli_args["video_file"])
@@ -23,14 +26,22 @@ processed_video_dir = video_file.cwd().joinpath(video_file.name.split(".")[0])
 processed_video_dir.mkdir(exist_ok=True)
 clip = mp.VideoFileClip(video_file)
 
-while True:
-    try:
-        start_time, end_time = input("Enter time range: ").split()
-        clipped_video = clip.subclipped(start_time, end_time)
-        clipped_video.write_videofile("clipped_video.mp4", codec="libx264", audio_codec="aac")
-        break
-    except ValueError:
-        print("Invalid time range input!")
+if cli_args["clip_video"]:
+    while True:
+        try:
+            start_time, end_time = input("Enter time range: ").split()
+            clipped_video = clip.subclipped(start_time, end_time)
+            clipped_video.write_videofile("video.mp4", codec="libx264", audio_codec="aac")
+            if processed_video_dir.joinpath("video.mp4").exists():
+                os.remove(processed_video_dir.joinpath("video.mp4"))
+            shutil.move("video.mp4", processed_video_dir)
+            break
+        except ValueError:
+            print("Invalid time range input!")
+else:
+    if processed_video_dir.joinpath("video.mp4").exists():
+        os.remove(processed_video_dir.joinpath("video.mp4"))
+    shutil.copy(video_file, processed_video_dir.joinpath("video.mp4"))
 
 base_path = Path(os.getcwd())
 image_frames = base_path.joinpath("video_frames")
@@ -38,10 +49,10 @@ if image_frames.exists():
     shutil.rmtree(image_frames)
 image_frames.mkdir(exist_ok=True)
 
-cap = cv2.VideoCapture(base_path.joinpath("clipped_video.mp4"))
+cap = cv2.VideoCapture(processed_video_dir.joinpath("video.mp4"))
 
 if not cap.isOpened():
-    print(f"Could not open {video_path}")
+    print(f"Could not open processed video!")
     sys.exit(1)
 
 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
