@@ -43,7 +43,7 @@ class AdFrameGenerator:
         tf.print(f"{video_path}: UNUSED AUDIO FRAMES {unused_audio_frames}.")
         audio_per_video = int(audio_per_video)
         audio_frames_per_sequence = int(audio_per_video * self._sequence_length)
-        max_video_idx = total_video_frames - self._sequence_length + 1
+        max_video_idx = total_video_frames - self._sequence_length
         for sample_num in range(self._samples_per_video):
             start_video_idx = random.randint(0, max_video_idx)
             end_video_idx = start_video_idx + self._sequence_length

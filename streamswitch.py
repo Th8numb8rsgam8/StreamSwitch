@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 import tensorflow as tf
-from tensorflow.keras.utils import plot_model
+# from tensorflow.keras.utils import plot_model
 from data_generation import AdFrameGenerator
 from ad_detector_nn import AdDetectorNN
 
@@ -9,25 +9,30 @@ import pdb
 
 # tf.config.run_functions_eagerly(True)
 # tf.data.experimental.enable_debug_mode()
+# tf.debugging.set_log_device_placement(True)
 
-base_path = Path(os.getcwd())
-training_data = base_path.joinpath("training_data")
+print(f'NUM GPUs AVAILABLE: {len(tf.config.list_physical_devices("GPU"))}')
+
+# base_path = Path(os.getcwd())
+# training_data = base_path.joinpath("training_data")
+training_data_root_dir = Path(os.environ["SM_CHANNEL_TRAIN"])
 
 # Configuration
 NUM_CLASSES = 3
-SEQUENCE_LENGTH = 15 
-BATCH_SIZE = 8 
+SEQUENCE_LENGTH = 15
+BATCH_SIZE = 8
 IMG_SIZE = (227, 227, 3) # Height, Width, Channels
 AUDIO_FRAME_SHAPE = (AdFrameGenerator.NUM_CEPSTRAL_COEFFS * 2, AdFrameGenerator.NUM_CEPSTRAL_FRAMES, 1)
-VIDEO_PATHS = [training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e"), training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c")]
+# VIDEO_PATHS = [training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e"), training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c")]
+VIDEO_PATHS = [d for d in training_data_root_dir.joinpath("streamswitch_fsx").iterdir()]
 SAMPLES_PER_VIDEO = 100
 TOTAL_SAMPLES = len(VIDEO_PATHS) * SAMPLES_PER_VIDEO
 
 # Instantiate the generator
 frame_generator = AdFrameGenerator(
-    video_paths=VIDEO_PATHS, 
+    video_paths=VIDEO_PATHS,
     samples_per_video=SAMPLES_PER_VIDEO,
-    sequence_length=SEQUENCE_LENGTH, 
+    sequence_length=SEQUENCE_LENGTH,
     target_shape=IMG_SIZE[:2])
 
 # Create the dataset
@@ -47,7 +52,7 @@ dataset = tf.data.Dataset.from_generator(
 dataset = dataset.batch(BATCH_SIZE).repeat().prefetch(tf.data.AUTOTUNE)
 model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
 model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=base_path.joinpath("logs"), histogram_freq=1, write_graph=True)
+# tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=base_path.joinpath("logs"), histogram_freq=1, write_graph=True)
 
 model.fit(dataset, epochs=2, steps_per_epoch=TOTAL_SAMPLES // BATCH_SIZE)
 # model.build(((None, *VIDEO_FRAME_SHAPE), (None, *AUDIO_FRAME_SHAPE)))
