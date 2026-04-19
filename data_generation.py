@@ -14,8 +14,8 @@ import pdb
 
 class AdFrameGenerator:
 
-    NUM_CEPSTRAL_FRAMES = 26 
-    NUM_CEPSTRAL_COEFFS = 13
+    NUM_CEPSTRAL_FRAMES = 52 
+    NUM_CEPSTRAL_COEFFS = 26
 
     def __init__(self, video_paths, samples_per_video, sequence_length, target_shape=(224, 224)):
 
@@ -26,6 +26,7 @@ class AdFrameGenerator:
 
         self._win_len = 0.025
         self._win_len_precision = 5
+        self._num_filters = 64
 
     def _get_frames(self, video_path):
 
@@ -134,7 +135,8 @@ class AdFrameGenerator:
         gfcc_coefficients = gfcc(
             sig=normalized_array, 
             fs=audio_sample_rate, 
-            num_ceps=AdFrameGenerator.NUM_CEPSTRAL_COEFFS, 
+            num_ceps=AdFrameGenerator.NUM_CEPSTRAL_COEFFS,
+            nfilts=self._num_filters,
             window=window)
         
         return (mfcc_coefficients, gfcc_coefficients.transpose())

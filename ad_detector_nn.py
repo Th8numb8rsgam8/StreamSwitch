@@ -117,6 +117,7 @@ class AdDetectorNN(Model):
     def call(self, inputs):
 
         video_input, audio_input = inputs
+        print(f"FEEDING DATA: VIDEO SHAPE - {video_input.shape}; AUDIO SHAPE - {audio_input.shape}")
         video_output = self.videoNN(video_input)
         audio_output = self.audioNN(audio_input)
 

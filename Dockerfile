@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     # cuda-cudart-12-5 \
     # cuda-compat-12-5 \
     cudnn9-cuda-12 \
+    strace \
     # libcudnn9-dev-cuda-12 \
     # gcc \
     # g++ \
@@ -30,6 +31,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install SageMaker Training Toolkit (required for integration)
 RUN pip install sagemaker-training==5.1.1
+RUN pip install tensorboard
 RUN pip install --upgrade --force-reinstall cryptography pyOpenSSL
 
 # Install Python packages into Anaconda environment
