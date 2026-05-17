@@ -1,6 +1,7 @@
 import sys
 import time
 from datetime import datetime
+import samplerate
 import pyaudio
 import librosa
 from spafe.features.gfcc import gfcc
@@ -64,7 +65,6 @@ class AudioCaptureProcess(mp.Process):
         chunk=1024,
         audio_format=pyaudio.paInt16,
         channels=2,
-        sample_rate=44100,
         synchronizer=None,
         deposit_name=None,
         *args, **kwargs):
@@ -85,7 +85,6 @@ class AudioCaptureProcess(mp.Process):
         self.chunk = chunk
         self.audio_format = audio_format
         self.channels = channels
-        self.sample_rate = sample_rate
 
         try:
             self.stream = self.p.open(
@@ -95,9 +94,12 @@ class AudioCaptureProcess(mp.Process):
                 input=True,
                 input_device_index=audio_device_index,
                 frames_per_buffer=self.chunk)
+            self.sample_rate = int(audio_info["defaultSampleRate"])
 
         except OSError as e:
             if e.strerror == "Invalid sample rate":
+
+                print(f'Default sample rate {int(audio_info["defaultSampleRate"])} failed to open stream')
                 self.stream = self.p.open(
                     format=self.audio_format,
                     channels=self.channels,
@@ -105,6 +107,7 @@ class AudioCaptureProcess(mp.Process):
                     input=True,
                     input_device_index=audio_device_index,
                     frames_per_buffer=self.chunk)
+                self.sample_rate = 48000
 
     def run(self):
         self.synchronizer.wait()
@@ -161,7 +164,7 @@ def main():
         audio_frame_retrieval= np.ndarray(
             AUDIO_CHUNK_SIZE * NUM_AUDIO_CHANNELS, 
             dtype=np.int16, 
-            buffer=audio_shared_memory.buf).reshape(NUM_AUDIO_CHANNELS, -1)
+            buffer=audio_shared_memory.buf).reshape(-1, NUM_AUDIO_CHANNELS)
 
         video_process = VideoCaptureProcess(
             name="Video Capture Process",
@@ -178,6 +181,8 @@ def main():
             channels=NUM_AUDIO_CHANNELS,
             synchronizer=stream_synchronizer,
             deposit_name=audio_shared_memory.name)
+
+        audio_sample_rate = audio_process.sample_rate
 
         video_process.start()
         audio_process.start()
@@ -197,14 +202,19 @@ def main():
             frame = tf.image.convert_image_dtype(video_frame_retrieval, tf.float32)
             frame = tf.image.resize(frame, (224, 224))
 
-            print(f"FIDEO FRAME {frame.shape}")
+            resampled_audio = samplerate.resample(
+                    audio_frame_retrieval.astype(np.float32),
+                    16000 / audio_sample_rate,
+                    converter_type='sinc_best')
+
+            print(f"AUDIO SHAPE {resampled_audio.shape}")
 
             normalized_array = librosa.util.normalize(
-                librosa.to_mono(audio_frame_retrieval.astype(np.float32)))
+                librosa.to_mono(resampled_audio.T))
 
             mfcc_coefficients = librosa.feature.mfcc(
                 y=normalized_array, 
-                sr=48000,
+                sr=16000,
                 n_mfcc=NUM_CEPSTRAL_COEFFS,
                 hop_length=512)
 
@@ -212,7 +222,7 @@ def main():
 
             gfcc_coefficients = gfcc(
                 sig=normalized_array, 
-                fs=48000, 
+                fs=16000, 
                 num_ceps=NUM_CEPSTRAL_COEFFS, 
                 window=window).transpose()
 
