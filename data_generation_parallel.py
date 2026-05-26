@@ -23,7 +23,8 @@ class ParallelFrameGenerator:
         self._target_shape = target_shape
 
         self._AUDIO_SAMPLE_RATE = tf.cast(16000, dtype=tf.float32)
-        self._NUM_CEPSTRAL_FRAMES = tf.cast(52 , dtype=tf.float32)
+        self._NUM_AUDIO_CHANNELS = tf.cast(2, dtype=tf.int32)
+        self._NUM_CEPSTRAL_FRAMES = tf.cast(104 , dtype=tf.int32)
         self._NUM_CEPSTRAL_COEFFS = tf.cast(26, dtype=tf.int32)
         self._WINDOW_LENGTH = 0.128
         self._N_TAPS = 2048
@@ -37,7 +38,7 @@ class ParallelFrameGenerator:
     def get_frame(self, video_path):
 
         video_frames = tf.strings.join([video_path, "video_frames"], separator="/")
-        audio_file = tf.strings.join([video_path, "audio.wav"], separator="/")
+        audio_file = tf.strings.join([video_path, "audio_16khz.wav"], separator="/")
         label_file = tf.strings.join([video_path, "labels.npy"], separator="/")
 
         audio_binary = tf.io.read_file(audio_file)
@@ -45,10 +46,14 @@ class ParallelFrameGenerator:
 
         total_video_frames = self._video_frame_count_table.lookup(video_path)
         total_audio_frames = self._audio_frame_count_table.lookup(video_path)
-        audio_per_video = tf.math.floordiv(total_audio_frames, total_video_frames)
-        unused_audio_frames = tf.math.floormod(total_audio_frames, total_video_frames)
-        audio_per_video = int(audio_per_video)
-        audio_frames_per_sequence = int(audio_per_video * self._sequence_length)
+        extra_audio_frames = tf.math.floormod(total_audio_frames, total_video_frames)
+
+        padding_size = total_video_frames - extra_audio_frames
+        padding = tf.zeros((padding_size, self._NUM_AUDIO_CHANNELS), dtype=tf.float32)
+        audio = tf.concat([audio, padding], axis=0)
+        audio_per_video = tf.math.floordiv(total_audio_frames + padding_size, total_video_frames)
+        audio_per_video = tf.cast(audio_per_video, dtype=tf.int32)
+        audio_frames_per_sequence = tf.cast(audio_per_video * self._sequence_length, dtype=tf.int32)
         max_video_idx = total_video_frames - self._sequence_length
 
         start_video_idx = tf.random.uniform(shape=[], minval=0, maxval=max_video_idx+1, dtype=tf.int32)
@@ -62,17 +67,14 @@ class ParallelFrameGenerator:
         frame_step = self._get_frame_step(audio_frames_per_sequence)
         
         start_audio_idx = start_video_idx * audio_per_video
-        processed_audio_segment = self._get_processed_audio(
-            audio, 
-            start_audio_idx, 
-            start_audio_idx + audio_frames_per_sequence,
-            frame_step)
-
-        # audio_spectrogram = tf.expand_dims(audio_spectrogram, axis=2)
+        end_audio_idx = start_audio_idx + audio_frames_per_sequence
+        indices = tf.range(start_audio_idx, end_audio_idx)
+        audio_segment = tf.gather(audio, indices, axis=0)
+        processed_audio_segment = self._get_processed_audio(audio_segment, frame_step)
 
         index = self._label_array_table.lookup(video_path)
         label_array = tf.gather(self._ragged_labels_data, index)
-        label = label_array[end_video_idx]
+        label = label_array[end_video_idx-1]
 
         return (video_sequence, processed_audio_segment), label
     
@@ -113,10 +115,7 @@ class ParallelFrameGenerator:
         return tf.transpose(tf.convert_to_tensor(gtcc_filterbank, dtype=tf.float32))
 
     def _design_gammatone_fir(self, fc, order=4):
-        """
-        Approximates a Gammatone FIR filter impulse response.
-        B is calculated based on Equivalent Rectangular Bandwidth (ERB).
-        """
+
         t = np.arange(self._N_TAPS) / self._AUDIO_SAMPLE_RATE
         erb = 24.7 * (4.37 * fc / 1000 + 1)
         b = 1.019 * erb
@@ -132,8 +131,9 @@ class ParallelFrameGenerator:
     def _get_frame_step(self, audio_frames_per_sequence):
 
         audio_len = tf.cast(audio_frames_per_sequence, dtype=tf.float32)
-        win_hop_lower = (audio_len - self._AUDIO_SAMPLE_RATE * self._WINDOW_LENGTH) / (self._AUDIO_SAMPLE_RATE * self._NUM_CEPSTRAL_FRAMES)
-        win_hop_upper = (audio_len - self._AUDIO_SAMPLE_RATE * self._WINDOW_LENGTH) / (self._AUDIO_SAMPLE_RATE * (self._NUM_CEPSTRAL_FRAMES - tf.cast(1, dtype=tf.float32)))
+        num_cepstral_frames = tf.cast(self._NUM_CEPSTRAL_FRAMES, dtype=tf.float32)
+        win_hop_lower = (audio_len - self._AUDIO_SAMPLE_RATE * self._WINDOW_LENGTH) / (self._AUDIO_SAMPLE_RATE * num_cepstral_frames)
+        win_hop_upper = (audio_len - self._AUDIO_SAMPLE_RATE * self._WINDOW_LENGTH) / (self._AUDIO_SAMPLE_RATE * (num_cepstral_frames - 1.0))
         win_hop_lower = tf.math.ceil(win_hop_lower * 10**5) / 10**5
         win_hop_upper = tf.math.floor(win_hop_upper * 10**5) / 10**5
         win_hop = tf.random.uniform(
@@ -145,18 +145,17 @@ class ParallelFrameGenerator:
         frame_step = tf.cast(win_hop * self._AUDIO_SAMPLE_RATE, tf.int32)
         return frame_step
     
-    def _get_processed_audio(self, audio, start_idx, end_idx, frame_step):
+    def _get_processed_audio(self, audio_segment, frame_step):
 
-        audio_array = tf.transpose(audio[start_idx:end_idx, :])
-        audio_array = tf.cast(audio_array, dtype=tf.float32)
-        audio_array = tf.reduce_mean(audio_array, axis=0)
-        audio_array, _ = tf.linalg.normalize(audio_array)
-        audio_array = tf.squeeze(audio_array)
-        emphasis = audio_array[..., 1:] - 0.97 * audio_array[..., :-1]
-        audio_array = tf.concat([audio_array[...,:1], emphasis], axis=0)
+        audio_segment = tf.transpose(audio_segment)
+        audio_segment = tf.cast(audio_segment[...], dtype=tf.float32)
+        audio_segment = tf.reduce_mean(audio_segment, axis=0)
+        audio_segment, _ = tf.linalg.normalize(audio_segment)
+        emphasis = audio_segment[..., 1:] - 0.97 * audio_segment[..., :-1]
+        audio_segment = tf.concat([audio_segment[...,:1], emphasis], axis=0)
 
         stft = tf.signal.stft(
-            audio_array,
+            audio_segment,
             frame_length=self._N_TAPS,
             frame_step=frame_step,
             window_fn=tf.signal.hamming_window
@@ -167,16 +166,14 @@ class ParallelFrameGenerator:
         mel_spectrogram = tf.tensordot(spectrogram, self._MFCC_FILTERBANK, 1)
         log_mel_spectrogram = tf.math.log(mel_spectrogram + 1e-6)
         mfcc_coefficients = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrogram)
+        mfcc_coefficients = mfcc_coefficients[..., :self._NUM_CEPSTRAL_FRAMES, :self._NUM_CEPSTRAL_COEFFS]
 
         gammatone_spectrogram = tf.tensordot(spectrogram, self._GTCC_FILTERBANK, 1)
         log_gammatone_spectrogram = tf.math.log(gammatone_spectrogram + 1e-10)
         gtcc_coefficients = tf.signal.dct(log_gammatone_spectrogram, type=2, norm='ortho')
+        gtcc_coefficients = gtcc_coefficients[..., :self._NUM_CEPSTRAL_FRAMES, :self._NUM_CEPSTRAL_COEFFS]
 
-        processed_audio_segment = tf.transpose(tf.concat(
-            [
-                mfcc_coefficients[...,:self._NUM_CEPSTRAL_COEFFS], 
-                gtcc_coefficients[...,:self._NUM_CEPSTRAL_COEFFS]
-            ], axis=-1))
+        processed_audio_segment = tf.stack([mfcc_coefficients, gtcc_coefficients], axis=-1)
 
         return processed_audio_segment
 

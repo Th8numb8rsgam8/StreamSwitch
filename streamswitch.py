@@ -38,16 +38,23 @@ training_data = base_path.joinpath("training_data")
 
 # Configuration
 NUM_CLASSES = 3
-SEQUENCE_LENGTH = 10
+SEQUENCE_LENGTH = 60
 BATCH_SIZE = 16
 IMG_SIZE = (227, 227, 3) # Height, Width, Channels
-AUDIO_FRAME_SHAPE = (AdFrameGenerator.NUM_CEPSTRAL_COEFFS * 2, AdFrameGenerator.NUM_CEPSTRAL_FRAMES, 1)
+AUDIO_FRAME_SHAPE = (104, 26, 2) # Frames, Cepstral Coefficients, Channels
 SAMPLES_PER_VIDEO = 100 
 
+TRAINING_DATA_PROPORTION = 0.8
+VALIDATION_DATA_PROPORTION = 0.2
+
 VIDEO_PATHS = [str(training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e").absolute()), str(training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c").absolute())]
+# VIDEO_PATHS = [training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e").absolute(), training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c").absolute()]
 # VIDEO_PATHS = [d for d in training_data_root_dir.joinpath("streamswitch_fsx").iterdir()]
 random.shuffle(VIDEO_PATHS)
 SAMPLES = list(np.repeat(VIDEO_PATHS, SAMPLES_PER_VIDEO))
+random.shuffle(SAMPLES)
+
+TRAINING_SAMPLE_SIZE = int(TRAINING_DATA_PROPORTION * len(SAMPLES))
 print(f"NUM VIDEO FILES {len(VIDEO_PATHS)}")
 print(f"TOTAL SAMPLES: {len(SAMPLES)} - STEPS PER EPOCH: {len(SAMPLES) // BATCH_SIZE}")
 
@@ -57,7 +64,7 @@ for path in VIDEO_PATHS:
     with open(Path(path).joinpath("metadata.json"), "r") as f:
         metadata = json.load(f)
         video_frame_counts.append(metadata["total_video_frames"])
-        audio_frame_counts.append(metadata["total_audio_frames"])
+        audio_frame_counts.append(metadata["total_audio_frames_16khz"])
 
 labels_data = []
 max_video_frames = max(video_frame_counts)
@@ -102,20 +109,49 @@ frame_generator = ParallelFrameGenerator(
     sequence_length=SEQUENCE_LENGTH, 
     target_shape=IMG_SIZE[:2])
 
-ds = tf.data.Dataset.from_tensor_slices(SAMPLES)
-dataset = ds.map(frame_generator.get_frame, num_parallel_calls=tf.data.AUTOTUNE)
+dataset = tf.data.Dataset.from_tensor_slices(SAMPLES)
+train_ds = dataset.take(TRAINING_SAMPLE_SIZE)
+val_ds = dataset.skip(TRAINING_SAMPLE_SIZE)
+train_ds = train_ds.map(frame_generator.get_frame, num_parallel_calls=tf.data.AUTOTUNE)
+val_ds = val_ds.map(frame_generator.get_frame, num_parallel_calls=tf.data.AUTOTUNE)
 
-dataset = dataset.batch(BATCH_SIZE).repeat().prefetch(tf.data.AUTOTUNE)
-# model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
-# model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+################################################################################
+
+# # Instantiate the generator
+# frame_generator = AdFrameGenerator(
+#     video_paths=VIDEO_PATHS,
+#     samples_per_video=SAMPLES_PER_VIDEO,
+#     sequence_length=SEQUENCE_LENGTH,
+#     target_shape=IMG_SIZE[:2])
+# 
+# # Create the dataset
+# output_signature = (
+#     (
+#         tf.TensorSpec(shape=(SEQUENCE_LENGTH, *IMG_SIZE), dtype=tf.float32),
+#         tf.TensorSpec(shape=(2 * AdFrameGenerator.NUM_CEPSTRAL_COEFFS, AdFrameGenerator.NUM_CEPSTRAL_FRAMES, 1), dtype=tf.float32)
+#     ),
+#     tf.TensorSpec(shape=(), dtype=tf.uint8)
+# )
+# 
+# dataset = tf.data.Dataset.from_generator(
+#     frame_generator,
+#     output_signature=output_signature
+# )
+
+################################################################################
+
+train_ds = train_ds.batch(BATCH_SIZE).repeat().prefetch(tf.data.AUTOTUNE)
+val_ds = val_ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
+model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 # tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=output_dir.joinpath("tensorboard"), update_freq='batch', write_graph=True)
 
-# model.fit(dataset, epochs=2, steps_per_epoch=TOTAL_SAMPLES // BATCH_SIZE) # callbacks=[tensorboard_callback])
+model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE) # callbacks=[tensorboard_callback])
 # model.build(((None, *VIDEO_FRAME_SHAPE), (None, *AUDIO_FRAME_SHAPE)))
 # plot_model(model, to_file=base_path.joinpath("ad_detector.png"), show_shapes=True, show_layer_names=True)
 
-for data, label in dataset:
-    video_grp, audio_grp = data
-    pdb.set_trace()
-    # result = model.predict((video_grp, audio_grp))
-    print("GENERATING DATA!")
+# for data, label in train_ds:
+#     print("GENERATING DATA!")
+#     video_segment, audio_segment = data
+#     pdb.set_trace()
+#     # result = model.predict((video_grp, audio_grp))

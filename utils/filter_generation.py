@@ -36,8 +36,11 @@ def design_gammatone_fir(fs, fc, n_taps=256, order=4):
 NUM_CEPSTRAL_FRAMES = tf.cast(52, dtype=tf.float32)
 WINDOW_LENGTH = 0.128
 
-wav_file = Path(os.getcwd()).joinpath("audio.wav")
+wav_file = Path(os.getcwd()).joinpath("audio_16khz.wav")
 sample_rate, audio = wavfile.read(wav_file)
+
+pdb.set_trace()
+
 audio = np.mean(audio[:41000], axis=1)
 
 fs = 16000     # Sampling rate (Hz)
@@ -47,7 +50,7 @@ NUM_FILTERS = 64
 N_TAPS = 2048
 
 # 1. Pre-emphasis
-audio = samplerate.resample(audio, fs / sample_rate, converter_type='sinc_best')
+# audio = samplerate.resample(audio, fs / sample_rate, converter_type='sinc_best')
 audio = np.append(audio[0], audio[1:] - 0.97 * audio[:-1])
 
 audio_len = tf.cast(len(audio), dtype=tf.float32)

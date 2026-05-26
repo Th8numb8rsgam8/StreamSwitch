@@ -4,6 +4,8 @@ import cv2
 import json
 import subprocess
 from pathlib import Path
+import samplerate
+import numpy as np
 import scipy.io.wavfile as wavfile
 
 import pdb
@@ -16,6 +18,9 @@ result = subprocess.run("aws s3 ls s3://streamswitch-training-data", shell=True,
 video_hashes = result.stdout.replace(" ", "").replace("PRE", "").replace("/", "").split("\n")
 video_hashes.pop()
 
+AUDIO_SAMPLE_RATE = 16000
+
+integer_dtype = 0
 for video_hash in video_hashes:
     metadata_file = training_data.joinpath(video_hash, "metadata.json")
     # result = subprocess.run(f"aws s3 cp s3://streamswitch-training-data/{video_hash}/video.mp4 .", shell=True)
@@ -28,13 +33,22 @@ for video_hash in video_hashes:
 
     result = subprocess.run(f"aws s3 cp s3://streamswitch-training-data/{video_hash}/audio.wav .", shell=True)
     if result.returncode == 0:
-        print(f"VIDEO {video_hash} DOWNLOAD SUCCESS")
+        print(f"AUDIO {video_hash} DOWNLOAD SUCCESS")
     sr, wav_audio = wavfile.read(base_path.joinpath("audio.wav"))
+    if wav_audio.dtype == np.int16:
+        integer_dtype += 1
+        print(f"AUDIO IS INT16 data type: {integer_dtype}")
+        wav_audio = wav_audio.astype(np.float32) / 32768.0
+    else:
+        wav_audio = wav_audio.astype(np.float32)
+    resampled_audio = samplerate.resample(wav_audio, AUDIO_SAMPLE_RATE / sr, converter_type='sinc_best')
+    wavfile.write("audio_16khz.wav", AUDIO_SAMPLE_RATE, (resampled_audio * 32767).astype(np.int16))
 
     with open(metadata_file, "r") as f:
         metadata = json.load(f)
         # metadata["audio_sample_rate"] = int(audio_sample_rate.stdout)
-        metadata["total_audio_frames"] = wav_audio.shape[0]
+        # metadata["total_audio_frames"] = wav_audio.shape[0]
+        metadata["total_audio_frames_16khz"]  = resampled_audio.shape[0]
     
     with open(metadata_file, "w") as f:
         json.dump(metadata, f, indent=4)
@@ -75,8 +89,10 @@ for video_hash in video_hashes:
 
     # result = subprocess.run(f'ffmpeg -i {base_path.joinpath("video.mp4")} -vn -acodec pcm_s16le -ar {int(audio_sample_rate.stdout)} -ac 2 audio.wav', shell=True)
     # result = subprocess.run(f'aws s3 mv {base_path.joinpath("audio.wav")} s3://streamswitch-training-data/{video_hash}/audio.wav', shell=True)
-    # if result.returncode == 0:
-    #     print(f"{video_hash} AUDIO WAV FILE UPLOAD SUCCESS WITH SAMPLE RATE#{int(audio_sample_rate.stdout)}!")
+    result = subprocess.run(f'aws s3 mv {base_path.joinpath("audio_16khz.wav")} s3://streamswitch-training-data/{video_hash}/audio_16khz.wav', shell=True)
+    if result.returncode == 0:
+        # print(f"{video_hash} AUDIO WAV FILE UPLOAD SUCCESS WITH SAMPLE RATE {int(audio_sample_rate.stdout)}!")
+        print(f"{video_hash} AUDIO WAV FILE UPLOAD SUCCESS!")
 
     result = subprocess.run(f'aws s3 cp {metadata_file} s3://streamswitch-training-data/{video_hash}/metadata.json', shell=True)
     if result.returncode == 0:
