@@ -62,6 +62,7 @@ class ParallelFrameGenerator:
 
         image_paths = tf.vectorized_map(lambda x: tf.strings.join([video_frames, "frame_" + tf.strings.as_string(x) + ".jpg"], separator="/"), sequence_indices)
         video_sequence = tf.vectorized_map(self._get_video_sequence, image_paths)
+        video_sequence = self._normalize_data(video_sequence)
 
         # Select window hop
         frame_step = self._get_frame_step(audio_frames_per_sequence)
@@ -144,7 +145,18 @@ class ParallelFrameGenerator:
 
         frame_step = tf.cast(win_hop * self._AUDIO_SAMPLE_RATE, tf.int32)
         return frame_step
-    
+        
+    def _normalize_data(self, data):
+
+        mean = tf.math.reduce_mean(data)
+        variance = tf.math.reduce_variance(data)
+
+        epsilon = 1e-7  # Prevents division by zero
+        std_dev = tf.math.sqrt(variance + epsilon)
+        normalized_data = (data - mean) / std_dev
+
+        return normalized_data
+        
     def _get_processed_audio(self, audio_segment, frame_step):
 
         audio_segment = tf.transpose(audio_segment)
@@ -167,12 +179,14 @@ class ParallelFrameGenerator:
         log_mel_spectrogram = tf.math.log(mel_spectrogram + 1e-6)
         mfcc_coefficients = tf.signal.mfccs_from_log_mel_spectrograms(log_mel_spectrogram)
         mfcc_coefficients = mfcc_coefficients[..., :self._NUM_CEPSTRAL_FRAMES, :self._NUM_CEPSTRAL_COEFFS]
-
+        mfcc_coefficients = self._normalize_data(mfcc_coefficients)
+        
         gammatone_spectrogram = tf.tensordot(spectrogram, self._GTCC_FILTERBANK, 1)
         log_gammatone_spectrogram = tf.math.log(gammatone_spectrogram + 1e-10)
         gtcc_coefficients = tf.signal.dct(log_gammatone_spectrogram, type=2, norm='ortho')
         gtcc_coefficients = gtcc_coefficients[..., :self._NUM_CEPSTRAL_FRAMES, :self._NUM_CEPSTRAL_COEFFS]
-
+        gtcc_coefficients = self._normalize_data(gtcc_coefficients)
+        
         processed_audio_segment = tf.stack([mfcc_coefficients, gtcc_coefficients], axis=-1)
 
         return processed_audio_segment

@@ -10,7 +10,7 @@ class AdDetectorNN(Model):
         super(AdDetectorNN, self).__init__()
         self.videoNN = self._video_neural_net_architecture(sequence_length, video_frame_shape)
         self.audioNN = self._audio_neural_net_architecture(audio_frame_shape)
-        self.final_layer = layers.Dense(units=num_classes, activation='softmax', name='final_layer')
+        self.final_layer = layers.Dense(units=num_classes, activation='softmax', name='final_layer', dtype='float32')
 
     def _video_neural_net_architecture(self, sequence_length, video_frame_shape):
 
