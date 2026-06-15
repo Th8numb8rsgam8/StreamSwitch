@@ -9,7 +9,7 @@ aws ecr get-login-password | docker login --username AWS --password-stdin ${ACCO
 # aws sagemaker update-domain --domain-id d-jtha32prud4l --domain-settings-for-update '{"DockerSettings": {"EnableDockerAccess": "ENABLED"}}'
 
 docker build --network sagemaker -t ${IMAGE_NAME} .
-docker tag ${IMAGE_NAME}:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${REPOSITORY_NAME}
-docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${REPOSITORY_NAME}
+docker tag ${IMAGE_NAME}:latest ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${REPOSITORY_NAME}:gpu-optimized
+docker push ${ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${REPOSITORY_NAME}:gpu-optimized
 
 # docker run -it --name my_dev_container <image_uri> /bin/bash

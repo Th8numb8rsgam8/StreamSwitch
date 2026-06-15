@@ -7,17 +7,28 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 # from tensorflow.keras.utils import plot_model
-# from tensorflow.python.platform import build_info as tf_build_info
+from tensorflow.python.platform import build_info as tf_build_info
 from data_generation import AdFrameGenerator
 from data_generation_parallel import ParallelFrameGenerator
 from ad_detector_nn import AdDetectorNN
 
 import pdb
 
-# subprocess.run("nvcc --version", shell=True)
-# subprocess.run("nvidia-smi", shell=True)
+os.environ["NCCL_P2P_DISABLE"] = "1"
+os.environ["NCCL_IB_DISABLE"] = "1"
+
+result = subprocess.run("dpkg -l | grep nccl", shell=True, capture_output=True, text=True)
+print(f"RESULT: {result.stdout}")
+
+result = subprocess.run("nvcc --version", shell=True, capture_output=True, text=True)
+print(f"NVCC VERSION: {result.stdout}")
+
+result = subprocess.run("nvidia-smi", shell=True, capture_output=True, text=True)
+print(f"NVIDIA Driver Version: {result.stdout}")
+
 # print(f'CuDNN VERSION {tf_build_info.build_info["cudnn_version"]}')
-# print(f'CUDA VERSION {tf_build_info.build_info["cuda_version"]}')
+print(f'CUDA VERSION {tf_build_info.build_info["cuda_version"]}')
+# sys.exit(0)
                
 # tf.config.run_functions_eagerly(True)
 # tf.data.experimental.enable_debug_mode()
@@ -27,11 +38,9 @@ tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
 physical_devices = tf.config.list_physical_devices("GPU")
 print(f'NUM GPUs AVAILABLE: {len(physical_devices)}')
-if physical_devices:
-    try:
-        tf.config.experimental.set_memory_growth(physical_devices[0], True)
-    except RuntimeError as e:
-        print(e)
+if len(physical_devices) > 0:
+    for dev in physical_devices:
+        tf.config.experimental.set_memory_growth(dev, True)
 
 # base_path = Path(os.getcwd())
 # training_data = base_path.joinpath("training_data")
@@ -39,10 +48,15 @@ training_data_root_dir = Path(os.environ["SM_CHANNEL_TRAIN"])
 output_dir = Path(os.environ["SM_OUTPUT_DIR"])
 # checkpoint_dir = Path(os.environ["SM_CHECKPOINT_DIR"])
 
+tf.debugging.experimental.enable_dump_debug_info(
+    dump_root=str(output_dir.joinpath("tfdbg2_logdir")),
+    tensor_debug_mode="FULL_HEALTH"
+)
+
 # Configuration
 NUM_CLASSES = 3
 SEQUENCE_LENGTH = 60
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 IMG_SIZE = (227, 227, 3) # Height, Width, Channels
 AUDIO_FRAME_SHAPE = (104, 26, 2) # Frames, Cepstral Coefficients, Channels
 SAMPLES_PER_VIDEO = 64 
@@ -155,23 +169,30 @@ val_ds = val_ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
 ################################################################################
 
-model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
-optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=1.0)
-model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+strategy = tf.distribute.MirroredStrategy(
+    # cross_device_ops=tf.distribute.HierarchicalCopyAllReduce()
+)
+print(f"Number devices: {strategy.num_replicas_in_sync}")
 
-tensorboard_callback = tf.keras.callbacks.TensorBoard(
-    log_dir=output_dir.joinpath("tensorboard"),
-    update_freq='batch', 
-    write_graph=True)
+with strategy.scope():
+    
+    model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=1.0)
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-# checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-#     filepath=checkpoint_dir.joinpath('weights-{epoch:02d}.ckpt'),
-#     save_weights_only=True,
-#     monitor='val_loss',
-#     save_best_only=True
-# )
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(
+        log_dir=output_dir.joinpath("tensorboard"),
+        update_freq='batch', 
+        write_graph=True)
 
-model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE, callbacks=[tensorboard_callback])
+    # checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+    #     filepath=checkpoint_dir.joinpath('weights-{epoch:02d}.ckpt'),
+    #     save_weights_only=True,
+    #     monitor='val_loss',
+    #     save_best_only=True
+    # )
+
+    model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE, callbacks=[tensorboard_callback])
 # model.build(((None, *VIDEO_FRAME_SHAPE), (None, *AUDIO_FRAME_SHAPE)))
 # plot_model(model, to_file=base_path.joinpath("ad_detector.png"), show_shapes=True, show_layer_names=True)
 
