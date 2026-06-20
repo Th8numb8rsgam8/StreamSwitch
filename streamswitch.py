@@ -6,30 +6,32 @@ import subprocess
 from pathlib import Path
 import numpy as np
 import tensorflow as tf
-# from tensorflow.keras.utils import plot_model
+from tensorflow.keras.utils import plot_model
 from tensorflow.python.platform import build_info as tf_build_info
-from data_generation import AdFrameGenerator
 from data_generation_parallel import ParallelFrameGenerator
 from ad_detector_nn import AdDetectorNN
 
 import pdb
 
-os.environ["NCCL_P2P_DISABLE"] = "1"
-os.environ["NCCL_IB_DISABLE"] = "1"
 
-result = subprocess.run("dpkg -l | grep nccl", shell=True, capture_output=True, text=True)
-print(f"RESULT: {result.stdout}")
-
-result = subprocess.run("nvcc --version", shell=True, capture_output=True, text=True)
-print(f"NVCC VERSION: {result.stdout}")
-
-result = subprocess.run("nvidia-smi", shell=True, capture_output=True, text=True)
-print(f"NVIDIA Driver Version: {result.stdout}")
+# os.environ["NCCL_P2P_DISABLE"] = "1"
+# os.environ["NCCL_IB_DISABLE"] = "1"
+# 
+# result = subprocess.run("dpkg -l | grep nccl", shell=True, capture_output=True, text=True)
+# print(f"RESULT: {result.stdout}")
+# 
+# result = subprocess.run("nvcc --version", shell=True, capture_output=True, text=True)
+# print(f"NVCC VERSION: {result.stdout}")
+# 
+# result = subprocess.run("nvidia-smi", shell=True, capture_output=True, text=True)
+# print(f"NVIDIA Driver Version: {result.stdout}")
 
 # print(f'CuDNN VERSION {tf_build_info.build_info["cudnn_version"]}')
-print(f'CUDA VERSION {tf_build_info.build_info["cuda_version"]}')
+# print(f'CUDA VERSION {tf_build_info.build_info["cuda_version"]}')
 # sys.exit(0)
-               
+
+################################################################################               
+
 # tf.config.run_functions_eagerly(True)
 # tf.data.experimental.enable_debug_mode()
 # tf.debugging.set_log_device_placement(True)
@@ -42,31 +44,34 @@ if len(physical_devices) > 0:
     for dev in physical_devices:
         tf.config.experimental.set_memory_growth(dev, True)
 
-# base_path = Path(os.getcwd())
-# training_data = base_path.joinpath("training_data")
-training_data_root_dir = Path(os.environ["SM_CHANNEL_TRAIN"])
-output_dir = Path(os.environ["SM_OUTPUT_DIR"])
+base_path = Path(os.getcwd())
+training_data = base_path.joinpath("training_data")
+# training_data_root_dir = Path(os.environ["SM_CHANNEL_TRAIN"])
+# output_dir = Path(os.environ["SM_OUTPUT_DIR"])
 # checkpoint_dir = Path(os.environ["SM_CHECKPOINT_DIR"])
 
-tf.debugging.experimental.enable_dump_debug_info(
-    dump_root=str(output_dir.joinpath("tfdbg2_logdir")),
-    tensor_debug_mode="FULL_HEALTH"
-)
+# tf.debugging.experimental.enable_dump_debug_info(
+#     dump_root=str(output_dir.joinpath("tfdbg2_logdir")),
+#     tensor_debug_mode="FULL_HEALTH"
+# )
 
 # Configuration
 NUM_CLASSES = 3
-SEQUENCE_LENGTH = 60
-BATCH_SIZE = 64
-IMG_SIZE = (227, 227, 3) # Height, Width, Channels
-AUDIO_FRAME_SHAPE = (104, 26, 2) # Frames, Cepstral Coefficients, Channels
+SEQUENCE_LENGTH = 10
+BATCH_SIZE = 1
+IMG_SIZE = (224, 224, 3) # Height, Width, Channels
+VIDEO_FRAMES_PER_AUDIO_STEP = 4
+# AUDIO_FRAME_SHAPE = (104, 26, 2) # Frames, Cepstral Coefficients, Channels
 SAMPLES_PER_VIDEO = 64 
 
 TRAINING_DATA_PROPORTION = 0.8
 VALIDATION_DATA_PROPORTION = 0.2
 
-# VIDEO_PATHS = [str(training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e").absolute()), str(training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c").absolute())]
+VIDEO_PATHS = [
+    str(training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e").absolute()), 
+    str(training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c").absolute())]
 # VIDEO_PATHS = [training_data.joinpath("0035e03a-2365-4bc7-920e-630050a93e2e").absolute(), training_data.joinpath("023d93ac-cbe0-47aa-a91c-06b3d8889e2c").absolute()]
-VIDEO_PATHS = [str(d) for d in training_data_root_dir.joinpath("streamswitch_fsx").iterdir()]
+# VIDEO_PATHS = [str(d) for d in training_data_root_dir.joinpath("streamswitch_fsx").iterdir()]
 random.shuffle(VIDEO_PATHS)
 SAMPLES = list(np.repeat(VIDEO_PATHS, SAMPLES_PER_VIDEO))
 # random.shuffle(SAMPLES)
@@ -91,7 +96,7 @@ for path in VIDEO_PATHS:
     labels_data.append(label_array)
 
 video_frame_count_table = tf.lookup.StaticHashTable(
-    tf.lookup.KeyValueTensorInitializer(tf.constant(VIDEO_PATHS), tf.constant(video_frame_counts)),
+    tf.lookup.KeyValueTensorInitializer(tf.constant(VIDEO_PATHS), tf.constant(video_frame_counts, dtype=tf.int32)),
     default_value=-1)
 
 audio_frame_count_table = tf.lookup.StaticHashTable(
@@ -122,6 +127,7 @@ frame_generator = ParallelFrameGenerator(
     video_frame_count_table=video_frame_count_table,
     audio_frame_count_table=audio_frame_count_table,
     sequence_length=SEQUENCE_LENGTH, 
+    video_frames_per_audio=4,
     target_shape=IMG_SIZE[:2])
 
 training_samples = SAMPLES[:TRAINING_SAMPLE_SIZE]
@@ -134,8 +140,6 @@ print(f"NUM VALIDATION SAMPLES: {len(validation_samples)}")
 
 random.shuffle(training_samples)
 train_ds = tf.data.Dataset.from_tensor_slices(training_samples)
-# train_ds = dataset.take(TRAINING_SAMPLE_SIZE)
-# val_ds = dataset.skip(TRAINING_SAMPLE_SIZE)
 train_ds = train_ds.map(frame_generator.get_frame, num_parallel_calls=tf.data.AUTOTUNE)
 
 val_ds = tf.data.Dataset.from_tensor_slices(validation_samples)
@@ -169,35 +173,57 @@ val_ds = val_ds.batch(BATCH_SIZE).prefetch(tf.data.AUTOTUNE)
 
 ################################################################################
 
-strategy = tf.distribute.MirroredStrategy(
-    # cross_device_ops=tf.distribute.HierarchicalCopyAllReduce()
-)
-print(f"Number devices: {strategy.num_replicas_in_sync}")
+model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, VIDEO_FRAMES_PER_AUDIO_STEP, NUM_CLASSES)
 
-with strategy.scope():
-    
-    model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, AUDIO_FRAME_SHAPE, NUM_CLASSES)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=1.0)
-    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+# dummy_audio = np.zeros((BATCH_SIZE, 84480), dtype=np.float32)
+# dummy_video = np.zeros((BATCH_SIZE, SEQUENCE_LENGTH * VIDEO_FRAMES_PER_AUDIO_STEP, *IMG_SIZE), dtype=np.float32)
+# _ = model([dummy_audio, dummy_video])
+# plot_model(
+#     model, 
+#     to_file=base_path.joinpath("ad_detector.png"), 
+#     expand_nested=True, 
+#     show_shapes=True, 
+#     show_layer_names=True)
 
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(
-        log_dir=output_dir.joinpath("tensorboard"),
-        update_freq='batch', 
-        write_graph=True)
+optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=1.0)
+loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False)
+# model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+# tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=output_dir.joinpath("tensorboard"), update_freq='batch', write_graph=True)
+# model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE)
 
-    # checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-    #     filepath=checkpoint_dir.joinpath('weights-{epoch:02d}.ckpt'),
-    #     save_weights_only=True,
-    #     monitor='val_loss',
-    #     save_best_only=True
-    # )
+# strategy = tf.distribute.MirroredStrategy(
+#     # cross_device_ops=tf.distribute.HierarchicalCopyAllReduce()
+# )
+# print(f"Number devices: {strategy.num_replicas_in_sync}")
 
-    model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE, callbacks=[tensorboard_callback])
+# with strategy.scope():
+#     
+#     model = AdDetectorNN(SEQUENCE_LENGTH, IMG_SIZE, VIDEO_FRAMES_PER_AUDIO_STEP, NUM_CLASSES)
+#     optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4, clipnorm=1.0)
+#     model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+# 
+#     tensorboard_callback = tf.keras.callbacks.TensorBoard(
+#         log_dir=output_dir.joinpath("tensorboard"),
+#         update_freq='batch', 
+#         write_graph=True)
+# 
+#     # checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+#     #     filepath=checkpoint_dir.joinpath('weights-{epoch:02d}.ckpt'),
+#     #     save_weights_only=True,
+#     #     monitor='val_loss',
+#     #     save_best_only=True
+#     # )
+# 
+#     model.fit(train_ds, validation_data=val_ds, epochs=2, steps_per_epoch=TRAINING_SAMPLE_SIZE // BATCH_SIZE, callbacks=[tensorboard_callback])
 # model.build(((None, *VIDEO_FRAME_SHAPE), (None, *AUDIO_FRAME_SHAPE)))
-# plot_model(model, to_file=base_path.joinpath("ad_detector.png"), show_shapes=True, show_layer_names=True)
 
-# for data, label in train_ds:
-#     print("GENERATING DATA!")
-#     video_segment, audio_segment = data
-#     pdb.set_trace()
-#     # result = model.predict((video_grp, audio_grp))
+for data, label in train_ds:
+    audio_sequence, video_sequence = data
+    pdb.set_trace()
+    with tf.GradientTape() as tape:
+
+        output = model(data, training=True)
+        loss_value = loss_fn(label, output)
+
+    grads = tape.gradient(loss_value, model.trainable_weights)
+    optimizer.apply_gradients((zip(grads, model.trainable_weights)))

@@ -1,0 +1,10 @@
+training_data/**
+!training_data/**/
+!training_data/0035e03a-2365-4bc7-920e-630050a93e2e/metadata.json
+!training_data/0035e03a-2365-4bc7-920e-630050a93e2e/audio_16khz.wav
+!training_data/0035e03a-2365-4bc7-920e-630050a93e2e/labels.npy
+!training_data/023d93ac-cbe0-47aa-a91c-06b3d8889e2c/metadata.json
+!training_data/023d93ac-cbe0-47aa-a91c-06b3d8889e2c/audio_16khz.wav
+!training_data/023d93ac-cbe0-47aa-a91c-06b3d8889e2c/labels.npy
+__pycache__/
+*.png

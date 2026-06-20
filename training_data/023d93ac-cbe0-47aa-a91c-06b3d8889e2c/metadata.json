@@ -1,0 +1,27 @@
+{
+    "source": "YouTubeTV",
+    "channel": "ESPN",
+    "content": {
+        "genre": "live_sports",
+        "detail": "basketball",
+        "length": "00:05:00"
+    },
+    "transitions": [
+        794,
+        5751,
+        5752,
+        5753,
+        5754,
+        5755,
+        5756,
+        5757,
+        5758,
+        5759
+    ],
+    "total_video_frames": 9000,
+    "total_ad_frames": 4956,
+    "total_content_frames": 4034,
+    "audio_sample_rate": 48000,
+    "total_audio_frames": 14400512,
+    "total_audio_frames_16khz": 4800171
+}
