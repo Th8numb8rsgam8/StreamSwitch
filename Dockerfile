@@ -48,6 +48,7 @@ RUN apt-get install -y --no-install-recommends \
 # Install SageMaker Training Toolkit (required for integration)
 RUN pip install sagemaker-training==5.1.1
 RUN pip install tensorboard
+RUN pip install tensorflow_hub
 RUN pip install --upgrade --force-reinstall cryptography pyOpenSSL
 
 # Install Python packages into Anaconda environment

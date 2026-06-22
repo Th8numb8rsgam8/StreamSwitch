@@ -1,3 +1,5 @@
+import tarfile
+import tempfile
 import tensorflow as tf
 import tensorflow_hub as hub
 from tensorflow.keras import layers, Model, utils, applications
@@ -6,7 +8,14 @@ import pdb
 
 class AdDetectorNN(Model):
 
-    def __init__(self, sequence_length, video_frame_shape, video_frames_per_audio, num_classes):
+    def __init__(
+        self, 
+        sequence_length, 
+        video_frame_shape, 
+        video_frames_per_audio, 
+        num_classes,
+        mobilenet_weights,
+        yamnet_weights):
 
         super(AdDetectorNN, self).__init__()
         # self.videoNN = self._video_neural_net_architecture(sequence_length, video_frame_shape)
@@ -20,7 +29,8 @@ class AdDetectorNN(Model):
         self._VIDEO_INPUT_SHAPE = (self._SEQ_LEN * self._FRAMES_PER_STEP, *self._VIDEO_FRAME_SHAPE)
         self._AUDIO_INPUT_SHAPE = (7680 * (self._SEQ_LEN + 1),)
 
-        self._yamnet_location = 'https://www.kaggle.com/models/google/yamnet/TensorFlow2/yamnet/1'
+        self._mobilenet_location = mobilenet_weights
+        self._yamnet_location = yamnet_weights
         self.NeuralNet = self._edge_device_ad_detector()
 
         # self.videoNN = self._video_neural_net_architecture(sequence_length, video_frame_shape)
@@ -41,7 +51,7 @@ class AdDetectorNN(Model):
         # mobilenet.trainable = False
         
         # time_distributed = layers.TimeDistributed(mobilenet, name="Time_Distributed_MobileNet")(video_input)
-        mobilenet = TimeDistributedMobileNet(self._VIDEO_FRAME_SHAPE)(video_input)
+        mobilenet = TimeDistributedMobileNet(self._mobilenet_location, self._VIDEO_FRAME_SHAPE)(video_input)
         reshaped_video_features = layers.Reshape((self._SEQ_LEN, self._FRAMES_PER_STEP, 576), name="reshape_video_frames")(mobilenet)
         visual_context = tf.keras.layers.Lambda(lambda x: tf.reduce_mean(x, axis=2), name="intra_step_pooling")(reshaped_video_features)
 
@@ -174,20 +184,23 @@ class AdDetectorNN(Model):
         return output
 
 class TimeDistributedMobileNet(layers.Layer):
-    def __init__(self, video_frame_shape, **kwargs):
+    
+    def __init__(self, mobilenet_location, video_frame_shape, **kwargs):
 
         # Passing dtype='float32' blocks the mixed_float16 policy from infecting MobileNet
         super(TimeDistributedMobileNet, self).__init__(dtype='float32', **kwargs)
         
         self.video_frame_shape = video_frame_shape
-        # Load MobileNetV3 Small with ImageNet weights (Requires exactly 3 channels)
+        
         self.mobilenet = applications.MobileNetV3Small(
             input_shape=self.video_frame_shape, 
             include_top=False, 
             pooling='avg', 
-            weights='imagenet',
+            weights=None,
             include_preprocessing=True
         )
+
+        self.mobilenet.load_weights(mobilenet_location)
         self.mobilenet.trainable = False
 
     def call(self, video_inputs):
@@ -213,10 +226,14 @@ class TimeDistributedMobileNet(layers.Layer):
 
 class YamnetEmbeddingExtractor(layers.Layer):
 
-    def __init__(self, hub_url, name=None, **kwargs):
+    def __init__(self, yamnet_location, name=None, **kwargs):
+        
         super(YamnetEmbeddingExtractor, self).__init__(name=name, dtype='float32', **kwargs)
-        self.hub_url = hub_url
-        self.yamnet = hub.KerasLayer(hub_url, trainable=False, name=name)
+
+        with tempfile.TemporaryDirectory() as yamnet_extract_dir:
+            with tarfile.open(yamnet_location, "r:gz") as tar:
+                tar.extractall(path=yamnet_extract_dir)
+            self.yamnet = hub.KerasLayer(yamnet_extract_dir, trainable=False, name=name)
 
     def call(self, inputs):
 
